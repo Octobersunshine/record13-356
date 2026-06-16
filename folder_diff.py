@@ -1,5 +1,6 @@
 import filecmp
 import os
+import shutil
 from typing import Dict, List
 
 
@@ -108,20 +109,139 @@ def format_result(result: Dict[str, List[str]]) -> str:
     return '\n'.join(lines)
 
 
-if __name__ == '__main__':
-    import sys
+def sync_folders(source: str, target: str, delete_extra: bool = False, dry_run: bool = False) -> Dict[str, List[str]]:
+    """
+    同步源文件夹到目标文件夹，将差异文件复制到目标文件夹。
 
-    if len(sys.argv) != 3:
-        print('用法: python folder_diff.py <原始文件夹> <目标文件夹>')
-        print('示例: python folder_diff.py ./v1 ./v2')
-        sys.exit(1)
+    Args:
+        source: 源文件夹路径（基准）
+        target: 目标文件夹路径
+        delete_extra: 是否删除目标中多余的文件（即源中不存在的文件）
+        dry_run: 试运行模式，只显示将要执行的操作，不实际执行
 
-    left_folder = sys.argv[1]
-    right_folder = sys.argv[2]
+    Returns:
+        包含同步操作详情的字典：
+        - 'copied': 复制的文件列表（新增+修改）
+        - 'deleted': 删除的文件列表（仅 delete_extra=True 时有值）
+        - 'skipped': 跳过的文件列表
+    """
+    sync_result = {
+        'copied': [],
+        'deleted': [],
+        'skipped': []
+    }
+
+    diff = compare_folders(source, target)
+
+    for file_path in diff['deleted']:
+        src_abs = os.path.join(source, file_path)
+        dst_abs = os.path.join(target, file_path)
+        if not dry_run:
+            os.makedirs(os.path.dirname(dst_abs), exist_ok=True)
+            shutil.copy2(src_abs, dst_abs)
+        sync_result['copied'].append(file_path)
+
+    for file_path in diff['modified']:
+        src_abs = os.path.join(source, file_path)
+        dst_abs = os.path.join(target, file_path)
+        if not dry_run:
+            os.makedirs(os.path.dirname(dst_abs), exist_ok=True)
+            shutil.copy2(src_abs, dst_abs)
+        sync_result['copied'].append(file_path)
+
+    if delete_extra:
+        for file_path in diff['added']:
+            dst_abs = os.path.join(target, file_path)
+            if not dry_run:
+                if os.path.isfile(dst_abs):
+                    os.remove(dst_abs)
+            sync_result['deleted'].append(file_path)
+
+        _clean_empty_dirs(target)
+    else:
+        sync_result['skipped'] = diff['added']
+
+    return sync_result
+
+
+def _clean_empty_dirs(root: str):
+    """
+    递归清理空目录。
+    """
+    if not os.path.isdir(root):
+        return
+
+    for name in os.listdir(root):
+        path = os.path.join(root, name)
+        if os.path.isdir(path):
+            _clean_empty_dirs(path)
 
     try:
-        diff_result = compare_folders(left_folder, right_folder)
-        print(format_result(diff_result))
+        os.rmdir(root)
+    except OSError:
+        pass
+
+
+def format_sync_result(result: Dict[str, List[str]], dry_run: bool = False) -> str:
+    """
+    格式化同步结果为易读的字符串。
+    """
+    prefix = '[试运行] ' if dry_run else ''
+    lines = []
+    lines.append('=' * 60)
+    lines.append(f'{prefix}文件夹同步结果')
+    lines.append('=' * 60)
+
+    lines.append(f'\n【复制】共 {len(result["copied"])} 个文件:')
+    if result['copied']:
+        for f in result['copied']:
+            lines.append(f'  + {f}')
+    else:
+        lines.append('  (无)')
+
+    if result['deleted']:
+        lines.append(f'\n【删除】共 {len(result["deleted"])} 个文件:')
+        for f in result['deleted']:
+            lines.append(f'  - {f}')
+
+    if result['skipped']:
+        lines.append(f'\n【跳过】共 {len(result["skipped"])} 个文件（目标中多余的）:')
+        for f in result['skipped']:
+            lines.append(f'  ~ {f}')
+
+    lines.append('\n' + '=' * 60)
+    total = len(result['copied']) + len(result['deleted'])
+    lines.append(f'总计: {total} 个文件变更')
+    lines.append('=' * 60)
+
+    return '\n'.join(lines)
+
+
+if __name__ == '__main__':
+    import sys
+    import argparse
+
+    parser = argparse.ArgumentParser(description='文件夹对比与同步工具')
+    parser.add_argument('source', help='源文件夹路径')
+    parser.add_argument('target', help='目标文件夹路径')
+    parser.add_argument('--sync', action='store_true', help='执行同步操作')
+    parser.add_argument('--delete', action='store_true', help='同步时删除目标中多余的文件')
+    parser.add_argument('--dry-run', action='store_true', help='试运行模式，不实际执行')
+
+    args = parser.parse_args()
+
+    try:
+        if args.sync:
+            sync_result = sync_folders(
+                args.source,
+                args.target,
+                delete_extra=args.delete,
+                dry_run=args.dry_run
+            )
+            print(format_sync_result(sync_result, dry_run=args.dry_run))
+        else:
+            diff_result = compare_folders(args.source, args.target)
+            print(format_result(diff_result))
     except FileNotFoundError as e:
         print(f'错误: {e}')
         sys.exit(1)
