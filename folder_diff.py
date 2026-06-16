@@ -23,10 +23,15 @@ def compare_folders(left: str, right: str) -> Dict[str, List[str]]:
         'modified': []
     }
 
-    def _compare(dcmp: filecmp.dircmp, base_path: str = ''):
+    def _compare_dirs(left_dir: str, right_dir: str, base_path: str = ''):
+        left_abs = os.path.join(left, left_dir) if left_dir else left
+        right_abs = os.path.join(right, right_dir) if right_dir else right
+
+        dcmp = filecmp.dircmp(left_abs, right_abs)
+
         for name in dcmp.left_only:
             full_path = os.path.join(base_path, name)
-            abs_path = os.path.join(left, full_path)
+            abs_path = os.path.join(left_abs, name)
             if os.path.isdir(abs_path):
                 _collect_files(abs_path, full_path, result['deleted'])
             else:
@@ -34,7 +39,7 @@ def compare_folders(left: str, right: str) -> Dict[str, List[str]]:
 
         for name in dcmp.right_only:
             full_path = os.path.join(base_path, name)
-            abs_path = os.path.join(right, full_path)
+            abs_path = os.path.join(right_abs, name)
             if os.path.isdir(abs_path):
                 _collect_files(abs_path, full_path, result['added'])
             else:
@@ -44,9 +49,11 @@ def compare_folders(left: str, right: str) -> Dict[str, List[str]]:
             full_path = os.path.join(base_path, name)
             result['modified'].append(full_path)
 
-        for name, sub_dcmp in dcmp.subdirs.items():
+        for name in dcmp.common_dirs:
+            sub_left = os.path.join(left_dir, name) if left_dir else name
+            sub_right = os.path.join(right_dir, name) if right_dir else name
             sub_base = os.path.join(base_path, name)
-            _compare(sub_dcmp, sub_base)
+            _compare_dirs(sub_left, sub_right, sub_base)
 
     def _collect_files(root: str, base_path: str, collector: List[str]):
         for dirpath, dirnames, filenames in os.walk(root):
@@ -63,8 +70,7 @@ def compare_folders(left: str, right: str) -> Dict[str, List[str]]:
     if not os.path.exists(right):
         raise FileNotFoundError(f"文件夹不存在: {right}")
 
-    dcmp = filecmp.dircmp(left, right)
-    _compare(dcmp)
+    _compare_dirs('', '')
 
     for key in result:
         result[key].sort()
